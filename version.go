@@ -3,11 +3,13 @@ package version
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"regexp"
 	"strconv"
 	"strings"
 
-	"gopkg.in/mgo.v2/bson"
+	"go.mongodb.org/mongo-driver/bson/bsontype"
+	"go.mongodb.org/mongo-driver/x/bsonx/bsoncore"
 )
 
 var datePattern = regexp.MustCompile(`\A20[12]\d(0[1-9]|1[012])(0[1-9]|[12]\d|3[01])(\d{2}){0,3}\z`)
@@ -57,12 +59,40 @@ type Version struct {
 	prelist []Pre
 }
 
-func (v *Version) SetBSON(raw bson.Raw) error {
-	return raw.Unmarshal(&v.Version)
+func (v *Version) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
+	start.Name.Local = "version" //设置标签为小写version
+
+	err := e.EncodeToken(start)
+	if err != nil {
+		return err
+	}
+
+	e.EncodeToken(xml.CharData(v.Version))
+	return e.EncodeToken(start.End())
 }
 
-func (v Version) GetBSON() (interface{}, error) {
-	return v.Version, nil
+func (v *Version) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var chardata xml.CharData
+	err := d.DecodeElement(&chardata, &start)
+	if err != nil {
+		return err
+	}
+	parseVersion(string(chardata), v)
+	return nil
+}
+
+func (v *Version) UnmarshalBSONValue(t bsontype.Type, raw []byte) error {
+	versionStr, rem, ok := bsoncore.ReadString(raw)
+	if !ok {
+		return bsoncore.NewInsufficientBytesError(raw, rem)
+	}
+
+	parseVersion(versionStr, v)
+	return nil
+}
+
+func (v Version) MarshalBSONValue() (bsontype.Type, []byte, error) {
+	return bsontype.String, bsoncore.AppendString(nil, v.Version), nil
 }
 
 func (v *Version) MarshalJSON() ([]byte, error) {
@@ -303,7 +333,7 @@ func splitVersionParts(version string) []string {
 			buf.WriteRune(r)
 			lastRune = 'N'
 
-		case ('a' <= r && r <= 'z'):
+		case 'a' <= r && r <= 'z':
 			if lastRune != 'S' {
 				flushBuf()
 			}
